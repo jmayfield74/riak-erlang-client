@@ -56,9 +56,9 @@
          list_keys/2, list_keys/3,
          stream_list_keys/2, stream_list_keys/3,
          get_bucket/2, get_bucket/3, get_bucket/4,
-         get_bucket_type/2, get_bucket_type/3, get_bucket_type/4,
+         get_bucket_type/2, get_bucket_type/3,
          set_bucket/3, set_bucket/4, set_bucket/5,
-         set_bucket_type/3, set_bucket_type/4, set_bucket_type/5,
+         set_bucket_type/3, set_bucket_type/4,
          reset_bucket/2, reset_bucket/3, reset_bucket/4,
          mapred/3, mapred/4, mapred/5,
          mapred_stream/4, mapred_stream/5, mapred_stream/6,
@@ -69,7 +69,8 @@
          get_index_eq/4, get_index_range/5, get_index_eq/5, get_index_range/6,
          cs_bucket_fold/3,
          default_timeout/1,
-         tunnel/4]).
+         tunnel/4,
+         get_preflist/3, get_preflist/4]).
 
 %% Counter API
 -export([counter_incr/4, counter_val/3]).
@@ -80,7 +81,7 @@
 
 %% Yokozuna admin commands
 -export([list_search_indexes/1, list_search_indexes/2,
-         create_search_index/2, create_search_index/4,
+         create_search_index/2, create_search_index/3, create_search_index/4,
          get_search_index/2, get_search_index/3,
          delete_search_index/2, delete_search_index/3,
          set_search_index/3,
@@ -154,6 +155,11 @@
                                % documentation.
                 reconnect_interval=?FIRST_RECONNECT_INTERVAL :: non_neg_integer()}).
 
+%% @private Like `gen_server:call/3', but with the timeout hardcoded
+%% to `infinity'.
+call_infinity(Pid, Msg) ->
+    gen_server:call(Pid, Msg, infinity).
+
 %% @doc Create a linked process to talk with the riak server on Address:Port
 %%      Client id will be assigned by the server.
 -spec start_link(address(), portnum()) -> {ok, pid()} | {error, term()}.
@@ -180,7 +186,7 @@ start(Address, Port, Options) when is_list(Options) ->
 %% @doc Disconnect the socket and stop the process.
 -spec stop(pid()) -> ok.
 stop(Pid) ->
-    gen_server:call(Pid, stop, infinity).
+    call_infinity(Pid, stop).
 
 %% @doc Change the options for this socket.  Allows you to connect with one
 %%      set of options then run with another (e.g. connect with no options to
@@ -189,10 +195,11 @@ stop(Pid) ->
 %% @see start_link/3
 -spec set_options(pid(), client_options()) -> ok.
 set_options(Pid, Options) ->
-    set_options(Pid, Options, infinity).
+    call_infinity(Pid, {set_options, Options}).
 
 %% @doc Like set_options/2, but with a gen_server timeout.
 %% @see start_link/3
+%% @deprecated
 -spec set_options(pid(), client_options(), timeout()) -> ok.
 set_options(Pid, Options, Timeout) ->
     gen_server:call(Pid, {set_options, Options}, Timeout).
@@ -203,26 +210,27 @@ set_options(Pid, Options, Timeout) ->
 %% @equiv is_connected(Pid, infinity)
 -spec is_connected(pid()) -> true | {false, [connection_failure()]}.
 is_connected(Pid) ->
-    is_connected(Pid, infinity).
+    call_infinity(Pid, is_connected).
 
 %% @doc Determines whether the client is connected, with the specified
 %% timeout to the client process. Returns true if connected, or false
 %% and a list of connection failures and frequencies if disconnected.
 %% @see is_connected/1
+%% @deprecated
 -spec is_connected(pid(), timeout()) -> true | {false, [connection_failure()]}.
 is_connected(Pid, Timeout) ->
     gen_server:call(Pid, is_connected, Timeout).
 
 %% @doc Ping the server
 %% @equiv ping(Pid, default_timeout(ping_timeout))
--spec ping(pid()) -> pong.  % or gen_server:call exception on timeout
+-spec ping(pid()) -> pong.
 ping(Pid) ->
-    ping(Pid, default_timeout(ping_timeout)).
+    call_infinity(Pid, {req, rpbpingreq, default_timeout(ping_timeout)}).
 
 %% @doc Ping the server specifying timeout
--spec ping(pid(), timeout()) -> pong.  % or gen_server:call exception on timeout
+-spec ping(pid(), timeout()) -> pong.
 ping(Pid, Timeout) ->
-    gen_server:call(Pid, {req, rpbpingreq, Timeout}, infinity).
+    call_infinity(Pid, {req, rpbpingreq, Timeout}).
 
 %% @doc Get the client id for this connection
 %% @equiv get_client_id(Pid, default_timeout(get_client_id_timeout))
@@ -233,7 +241,7 @@ get_client_id(Pid) ->
 %% @doc Get the client id for this connection specifying timeout
 -spec get_client_id(pid(), timeout()) -> {ok, client_id()} | {error, term()}.
 get_client_id(Pid, Timeout) ->
-    gen_server:call(Pid, {req, rpbgetclientidreq, Timeout}, infinity).
+    call_infinity(Pid, {req, rpbgetclientidreq, Timeout}).
 
 %% @doc Set the client id for this connection
 %% @equiv set_client_id(Pid, ClientId, default_timeout(set_client_id_timeout))
@@ -244,7 +252,9 @@ set_client_id(Pid, ClientId) ->
 %% @doc Set the client id for this connection specifying timeout
 -spec set_client_id(pid(), client_id(), timeout()) -> {ok, client_id()} | {error, term()}.
 set_client_id(Pid, ClientId, Timeout) ->
-    gen_server:call(Pid, {req, #rpbsetclientidreq{client_id = ClientId}, Timeout}, infinity).
+    call_infinity(Pid,
+                  {req, #rpbsetclientidreq{client_id = ClientId},
+                   Timeout}).
 
 %% @doc Get the server information for this connection
 %% @equiv get_server_info(Pid, default_timeout(get_server_info_timeout))
@@ -255,7 +265,7 @@ get_server_info(Pid) ->
 %% @doc Get the server information for this connection specifying timeout
 -spec get_server_info(pid(), timeout()) -> {ok, server_info()} | {error, term()}.
 get_server_info(Pid, Timeout) ->
-    gen_server:call(Pid, {req, rpbgetserverinforeq, Timeout}, infinity).
+    call_infinity(Pid, {req, rpbgetserverinforeq, Timeout}).
 
 %% @doc Get bucket/key from the server.
 %%      Will return {error, notfound} if the key is not on the server.
@@ -283,7 +293,7 @@ get(Pid, Bucket, Key, Options) ->
 get(Pid, Bucket, Key, Options, Timeout) ->
     {T, B} = maybe_bucket_type(Bucket),
     Req = get_options(Options, #rpbgetreq{type =T, bucket = B, key = Key}),
-    gen_server:call(Pid, {req, Req, Timeout}, infinity).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Put the metadata/value in the object under bucket/key
 %% @equiv put(Pid, Obj, [])
@@ -325,7 +335,7 @@ put(Pid, Obj, Options, Timeout) ->
                                  key = riakc_obj:key(Obj),
                                  vclock = riakc_obj:vclock(Obj),
                                  content = Content}),
-    gen_server:call(Pid, {req, Req, Timeout}, infinity).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Delete the key/value
 %% @equiv delete(Pid, Bucket, Key, [])
@@ -347,7 +357,7 @@ delete(Pid, Bucket, Key, Options) ->
 delete(Pid, Bucket, Key, Options, Timeout) ->
     {T, B} = maybe_bucket_type(Bucket),
     Req = delete_options(Options, #rpbdelreq{type = T, bucket = B, key = Key}),
-    gen_server:call(Pid, {req, Req, Timeout}, infinity).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 
 %% @doc Delete the object at Bucket/Key, giving the vector clock.
@@ -375,7 +385,7 @@ delete_vclock(Pid, Bucket, Key, VClock, Options, Timeout) ->
     {T, B} = maybe_bucket_type(Bucket),
     Req = delete_options(Options, #rpbdelreq{type = T, bucket = B, key = Key,
             vclock=VClock}),
-    gen_server:call(Pid, {req, Req, Timeout}, infinity).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 
 %% @doc Delete the riak object.
@@ -445,10 +455,10 @@ stream_list_buckets(Pid, Type, Options) ->
             ST -> ST
         end,
     ReqId = mk_reqid(),
-    gen_server:call(Pid, {req, #rpblistbucketsreq{timeout=ServerTimeout,
+    call_infinity(Pid, {req, #rpblistbucketsreq{timeout=ServerTimeout,
                                                   type=Type,
                                                   stream=true},
-                          infinity, {ReqId, self()}}, infinity).
+                          ServerTimeout, {ReqId, self()}}).
 
 legacy_list_buckets(Pid, Options) ->
     ServerTimeout =
@@ -456,8 +466,8 @@ legacy_list_buckets(Pid, Options) ->
             none -> ?DEFAULT_PB_TIMEOUT;
             ST -> ST
         end,
-    gen_server:call(Pid, {req, #rpblistbucketsreq{timeout=ServerTimeout},
-                          infinity}, infinity).
+    call_infinity(Pid, {req, #rpblistbucketsreq{timeout=ServerTimeout},
+                        ServerTimeout}).
 
 
 %% @doc List all keys in a bucket
@@ -518,8 +528,7 @@ stream_list_keys(Pid, Bucket, Options) ->
     {T, B} = maybe_bucket_type(Bucket),
     ReqMsg = #rpblistkeysreq{type = T, bucket = B, timeout = ServerTimeout},
     ReqId = mk_reqid(),
-    gen_server:call(Pid, {req, ReqMsg, infinity, {ReqId, self()}},
-                    infinity).
+    call_infinity(Pid, {req, ReqMsg, ServerTimeout, {ReqId, self()}}).
 
 %% @doc Get bucket properties.
 %% @equiv get_bucket(Pid, Bucket, default_timeout(get_bucket_timeout))
@@ -534,22 +543,20 @@ get_bucket(Pid, Bucket, Timeout) ->
     get_bucket(Pid, Bucket, Timeout, default_timeout(get_bucket_call_timeout)).
 
 %% @doc Get bucket properties specifying a server side and local call timeout.
+%% @deprecated because `CallTimeout' is ignored
 -spec get_bucket(pid(), bucket(), timeout(), timeout()) -> {ok, bucket_props()} |
                                                            {error, term()}.
-get_bucket(Pid, Bucket, Timeout, CallTimeout) ->
+get_bucket(Pid, Bucket, Timeout, _CallTimeout) ->
     {T, B} = maybe_bucket_type(Bucket),
     Req = #rpbgetbucketreq{type = T, bucket = B},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 get_bucket_type(Pid, BucketType) ->
     get_bucket_type(Pid, BucketType, default_timeout(get_bucket_timeout)).
 
 get_bucket_type(Pid, BucketType, Timeout) ->
-    get_bucket_type(Pid, BucketType, Timeout, default_timeout(get_bucket_call_timeout)).
-
-get_bucket_type(Pid, BucketType, Timeout, CallTimeout) ->
     Req = #rpbgetbuckettypereq{type = BucketType},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Set bucket properties.
 %% @equiv set_bucket(Pid, Bucket, BucketProps, default_timeout(set_bucket_timeout))
@@ -565,24 +572,21 @@ set_bucket(Pid, Bucket, BucketProps, Timeout) ->
                default_timeout(set_bucket_call_timeout)).
 
 %% @doc Set bucket properties specifying a server side and local call timeout.
+%% @deprecated because `CallTimeout' is ignored
 -spec set_bucket(pid(), bucket(), bucket_props(), timeout(), timeout()) -> ok | {error, term()}.
-set_bucket(Pid, Bucket, BucketProps, Timeout, CallTimeout) ->
+set_bucket(Pid, Bucket, BucketProps, Timeout, _CallTimeout) ->
     PbProps = riak_pb_codec:encode_bucket_props(BucketProps),
     {T, B} = maybe_bucket_type(Bucket),
     Req = #rpbsetbucketreq{type = T, bucket = B, props = PbProps},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 set_bucket_type(Pid, BucketType, BucketProps) ->
     set_bucket_type(Pid, BucketType, BucketProps, default_timeout(set_bucket_timeout)).
 
 set_bucket_type(Pid, BucketType, BucketProps, Timeout) ->
-    set_bucket_type(Pid, BucketType, BucketProps, Timeout,
-               default_timeout(set_bucket_call_timeout)).
-
-set_bucket_type(Pid, BucketType, BucketProps, Timeout, CallTimeout) ->
     PbProps = riak_pb_codec:encode_bucket_props(BucketProps),
     Req = #rpbsetbuckettypereq{type = BucketType, props = PbProps},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Reset bucket properties back to the defaults.
 %% @equiv reset_bucket(Pid, Bucket, default_timeout(reset_bucket_timeout), default_timeout(reset_bucket_call_timeout))
@@ -597,11 +601,12 @@ reset_bucket(Pid, Bucket, Timeout) ->
     reset_bucket(Pid, Bucket, Timeout, default_timeout(reset_bucket_call_timeout)).
 
 %% @doc Reset bucket properties back to the defaults.
+%% @deprecated because `CallTimeout' is ignored
 -spec reset_bucket(pid(), bucket, timeout(), timeout()) -> ok | {error, term()}.
-reset_bucket(Pid, Bucket, Timeout, CallTimeout) ->
+reset_bucket(Pid, Bucket, Timeout, _CallTimeout) ->
     {T, B} = maybe_bucket_type(Bucket),
     Req = #rpbresetbucketreq{type = T, bucket = B},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Perform a MapReduce job across the cluster.
 %%      See the MapReduce documentation for explanation of behavior.
@@ -680,6 +685,7 @@ mapred_stream(Pid, Inputs, Query, ClientPid, Timeout) ->
 %%      The ClientPid will receive messages in this format:
 %% ```  {ReqId::req_id(), {mapred, Phase::non_neg_integer(), mapred_result()}}
 %%      {ReqId::req_id(), done}'''
+%% @deprecated because `CallTimeout' is ignored
 -spec mapred_stream(ConnectionPid::pid(),Inputs::mapred_inputs(),
                     Query::[mapred_queryterm()], ClientPid::pid(),
                     Timeout::timeout(), CallTimeout::timeout()) ->
@@ -702,11 +708,11 @@ mapred_stream(Pid, {index,Bucket,Name,StartKey,EndKey}, Query, ClientPid, Timeou
 mapred_stream(Pid, {index,Bucket,Name,StartKey,EndKey}, Query, ClientPid, Timeout, CallTimeout) when is_binary(Name) andalso is_integer(EndKey) ->
     BinEndKey = list_to_binary(integer_to_list(EndKey)),
     mapred_stream(Pid, {index,Bucket,Name,StartKey,BinEndKey}, Query, ClientPid, Timeout, CallTimeout);
-mapred_stream(Pid, Inputs, Query, ClientPid, Timeout, CallTimeout) ->
+mapred_stream(Pid, Inputs, Query, ClientPid, Timeout, _CallTimeout) ->
     MapRed = [{'inputs', Inputs},
               {'query', Query},
               {'timeout', Timeout}],
-    send_mapred_req(Pid, MapRed, ClientPid, CallTimeout).
+    send_mapred_req(Pid, MapRed, ClientPid).
 
 %% @doc Perform a MapReduce job against a bucket across the cluster.
 %%      See the MapReduce documentation for explanation of behavior.
@@ -773,13 +779,14 @@ mapred_bucket_stream(Pid, Bucket, Query, ClientPid, Timeout) ->
 %%      The ClientPid will receive messages in this format:
 %% ```  {ReqId::req_id(), {mapred, Phase::non_neg_integer(), mapred_result()}}
 %%      {ReqId::req_id(), done}'''
+%% @deprecated because `CallTimeout' is ignored
 -spec mapred_bucket_stream(ConnectionPid::pid(), bucket(), [mapred_queryterm()], ClientPid::pid(), timeout(), timeout()) ->
                                   {ok, req_id()} | {error, term()}.
-mapred_bucket_stream(Pid, Bucket, Query, ClientPid, Timeout, CallTimeout) ->
+mapred_bucket_stream(Pid, Bucket, Query, ClientPid, Timeout, _CallTimeout) ->
     MapRed = [{'inputs', Bucket},
               {'query', Query},
               {'timeout', Timeout}],
-    send_mapred_req(Pid, MapRed, ClientPid, CallTimeout).
+    send_mapred_req(Pid, MapRed, ClientPid).
 
 
 %% @doc Execute a search query. This command will return an error
@@ -807,19 +814,19 @@ search(Pid, Index, SearchQuery, Options, Timeout) ->
 
 %% @doc Execute a search query. This command will return an error
 %%      unless executed against a Riak Search cluster.
+%% @deprecated because `CallTimeout' is ignored
 -spec search(pid(), binary(), binary(), search_options(), timeout(), timeout()) ->
                     {ok, search_result()} | {error, term()}.
-search(Pid, Index, SearchQuery, Options, Timeout, CallTimeout) ->
+search(Pid, Index, SearchQuery, Options, Timeout, _CallTimeout) ->
     Req = search_options(Options, #rpbsearchqueryreq{q = SearchQuery, index = Index}),
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 -spec get_search_schema(pid(), binary(), search_admin_opts()) ->
                     {ok, search_schema()} | {error, term()}.
 get_search_schema(Pid, SchemaName, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
     Req = #rpbyokozunaschemagetreq{ name = SchemaName },
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 -spec get_search_schema(pid(), binary()) ->
                     {ok, search_schema()} | {error, term()}.
@@ -830,9 +837,8 @@ get_search_schema(Pid, SchemaName) ->
                     {ok, search_index()} | {error, term()}.
 get_search_index(Pid, Index, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
     Req = #rpbyokozunaindexgetreq{ name = Index },
-    Results = gen_server:call(Pid, {req, Req, Timeout}, CallTimeout),
+    Results = call_infinity(Pid, {req, Req, Timeout}),
     case Results of
         {ok, [Result]} ->
             {ok, Result};
@@ -850,8 +856,7 @@ get_search_index(Pid, Index) ->
                     {ok, [search_index()]} | {error, term()}.
 list_search_indexes(Pid, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
-    gen_server:call(Pid, {req, #rpbyokozunaindexgetreq{}, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, #rpbyokozunaindexgetreq{}, Timeout}).
 
 -spec list_search_indexes(pid()) ->
                     {ok, [search_index()]} | {error, term()}.
@@ -869,11 +874,10 @@ create_search_schema(Pid, SchemaName, Content) ->
                     ok | {error, term()}.
 create_search_schema(Pid, SchemaName, Content, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
     Req = #rpbyokozunaschemaputreq{
         schema = #rpbyokozunaschema{name = SchemaName, content = Content}
     },
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc Create a search index.
 -spec create_search_index(pid(), binary()) ->
@@ -881,32 +885,51 @@ create_search_schema(Pid, SchemaName, Content, Opts) ->
 create_search_index(Pid, Index) ->
     create_search_index(Pid, Index, <<>>, []).
 
-%% @doc Create a search index.
--spec create_search_index(pid(), binary(), binary(), search_admin_opts()) ->
-                    ok | {error, term()}.
+-spec create_search_index(pid(), binary(), timeout() | search_admin_opts()) ->
+                                 ok | {error, term()}.
+create_search_index(Pid, Index, Timeout)
+  when is_integer(Timeout); Timeout =:= infinity ->
+    create_search_index(Pid, Index, <<>>, [{timeout, Timeout}]);
+create_search_index(Pid, Index, Opts) ->
+    create_search_index(Pid, Index, <<>>, Opts).
+
+-spec create_search_index(pid(), binary(), binary(),
+                          timeout()|search_admin_opts()) ->
+                                 ok | {error, term()}.
+create_search_index(Pid, Index, SchemaName, Timeout)
+  when is_integer(Timeout); Timeout =:= infinity  ->
+    create_search_index(Pid, Index, SchemaName, [{timeout, Timeout}]);
 create_search_index(Pid, Index, SchemaName, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
-    Req = #rpbyokozunaindexputreq{
-        index = #rpbyokozunaindex{name = Index, schema = SchemaName}
-    },
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    NVal = proplists:get_value(n_val, Opts),
+    Req = set_index_create_req_nval(NVal, Index, SchemaName),
+    Req1 = set_index_create_req_timeout(Timeout, Req),
 
+    Timeout1 = if
+                   is_integer(Timeout) ->
+                       %% Add an extra 500ms to the create_search_index timeout
+                       %% and use that for the socket timeout.
+                       %% This should give the creation process time to throw
+                       %% back a proper response.
+                       Timeout + 500;
+                   true ->
+                       Timeout
+               end,
+    call_infinity(Pid, {req, Req1, Timeout1}).
 
-%% @doc Create a search index.
+%% @doc Delete a search index.
 -spec delete_search_index(pid(), binary()) ->
                     ok | {error, term()}.
 delete_search_index(Pid, Index) ->
     delete_search_index(Pid, Index, []).
 
-%% @doc Create a search index.
+%% @doc Delete a search index.
 -spec delete_search_index(pid(), binary(), search_admin_opts()) ->
                     ok | {error, term()}.
 delete_search_index(Pid, Index, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, default_timeout(search_timeout)),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(search_call_timeout)),
     Req = #rpbyokozunaindexdeletereq{name = Index},
-    gen_server:call(Pid, {req, Req, Timeout}, CallTimeout).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 -spec set_search_index(pid(), bucket(), binary()) ->
                     ok | {error, term()}.
@@ -932,8 +955,8 @@ get_index(Pid, Bucket, Index, Key) ->
 %% @see get_index_eq/5
 -spec get_index(pid(), bucket(), binary() | secondary_index_id(), key() | integer(), timeout(), timeout()) ->
                        {ok, index_results()} | {error, term()}.
-get_index(Pid, Bucket, Index, Key, Timeout, CallTimeout) ->
-    get_index_eq(Pid, Bucket, Index, Key, [{timeout, Timeout}, {call_timeout, CallTimeout}]).
+get_index(Pid, Bucket, Index, Key, Timeout, _CallTimeout) ->
+    get_index_eq(Pid, Bucket, Index, Key, [{timeout, Timeout}]).
 
 %% @doc Execute a secondary index range query.
 %%
@@ -952,8 +975,8 @@ get_index(Pid, Bucket, Index, StartKey, EndKey) ->
 -spec get_index(pid(), bucket(), binary() | secondary_index_id(), key() | integer() | list(),
                 key() | integer() | list(), timeout(), timeout()) ->
                        {ok, index_results()} | {error, term()}.
-get_index(Pid, Bucket, Index, StartKey, EndKey, Timeout, CallTimeout) ->
-    get_index_range(Pid, Bucket, Index, StartKey, EndKey, [{timeout, Timeout}, {call_timeout, CallTimeout}]).
+get_index(Pid, Bucket, Index, StartKey, EndKey, Timeout, _CallTimeout) ->
+    get_index_range(Pid, Bucket, Index, StartKey, EndKey, [{timeout, Timeout}]).
 
 %% @doc Execute a secondary index equality query.
 %% equivalent to all defaults for the options.
@@ -966,7 +989,6 @@ get_index_eq(Pid, Bucket, Index, Key) ->
 %% @doc Execute a secondary index equality query with specified options
 %% <dl>
 %% <dt>timeout:</dt> <dd>milliseconds to wait for a response from riak</dd>
-%% <dt>call_timeout:</dt> <dd>milliseoonds to wait for a local gen_server response</dd>
 %% <dt>stream:</dt> <dd> true | false. Stream results to calling process</dd>
 %% <dt>continuation:</dt> <dd> The opaque, binary continuation returned from a previous query.
 %%                             Requests the next results.</dd>
@@ -985,7 +1007,6 @@ get_index_eq(Pid, Bucket, {integer_index, Name}, Key, Opts) when is_integer(Key)
     get_index_eq(Pid, Bucket, Index, BinKey, Opts);
 get_index_eq(Pid, Bucket, Index, Key, Opts) ->
     Timeout = proplists:get_value(timeout, Opts),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(get_index_call_timeout)),
     MaxResults = proplists:get_value(max_results, Opts),
     PgSort = proplists:get_value(pagination_sort, Opts),
     Stream = proplists:get_value(stream, Opts, false),
@@ -1003,11 +1024,11 @@ get_index_eq(Pid, Bucket, Index, Key, Opts) ->
     Call = case Stream of
                true ->
                    ReqId = mk_reqid(),
-                   {req, Req, infinity, {ReqId, self()}};
+                   {req, Req, Timeout, {ReqId, self()}};
                false ->
-                   {req, Req, infinity}
+                   {req, Req, Timeout}
            end,
-    gen_server:call(Pid, Call, CallTimeout).
+    call_infinity(Pid, Call).
 
 %% @doc Execute a secondary index range query.
 -spec get_index_range(pid(), bucket(), binary() | secondary_index_id(), key() | integer(), key() | integer()) ->
@@ -1035,7 +1056,6 @@ get_index_range(Pid, Bucket, {integer_index, Name}, StartKey, EndKey, Opts) when
     get_index_range(Pid, Bucket, Index, BinStartKey, BinEndKey, Opts);
 get_index_range(Pid, Bucket, Index, StartKey, EndKey, Opts) ->
     Timeout = proplists:get_value(timeout, Opts),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(get_index_call_timeout)),
     ReturnTerms = proplists:get_value(return_terms, Opts),
     TermRegex = proplists:get_value(term_regex, Opts),
     MaxResults = proplists:get_value(max_results, Opts),
@@ -1058,11 +1078,11 @@ get_index_range(Pid, Bucket, Index, StartKey, EndKey, Opts) ->
     Call = case Stream of
                true ->
                    ReqId = mk_reqid(),
-                   {req, Req, infinity, {ReqId, self()}};
+                   {req, Req, Timeout, {ReqId, self()}};
                false ->
-                   {req, Req, infinity}
+                   {req, Req, Timeout}
            end,
-    gen_server:call(Pid, Call, CallTimeout).
+    call_infinity(Pid, Call).
 
 encode_2i(Value) when is_integer(Value) ->
     list_to_binary(integer_to_list(Value));
@@ -1076,7 +1096,6 @@ encode_2i(Value) when is_binary(Value) ->
 cs_bucket_fold(Pid, Bucket, Opts) when is_pid(Pid), (is_binary(Bucket) orelse
                                                      is_tuple(Bucket)), is_list(Opts) ->
     Timeout = proplists:get_value(timeout, Opts),
-    CallTimeout = proplists:get_value(call_timeout, Opts, default_timeout(get_index_call_timeout)),
     StartKey = proplists:get_value(start_key, Opts, <<>>),
     EndKey = proplists:get_value(end_key, Opts),
     MaxResults = proplists:get_value(max_results, Opts),
@@ -1095,8 +1114,8 @@ cs_bucket_fold(Pid, Bucket, Opts) when is_pid(Pid), (is_binary(Bucket) orelse
                           continuation=Continuation,
                           timeout=Timeout},
     ReqId = mk_reqid(),
-    Call = {req, Req, infinity, {ReqId, self()}},
-    gen_server:call(Pid, Call, CallTimeout).
+    Call = {req, Req, Timeout, {ReqId, self()}},
+    call_infinity(Pid, Call).
 
 %% @doc Return the default timeout for an operation if none is provided.
 %%      Falls back to the default timeout.
@@ -1119,7 +1138,7 @@ default_timeout(OpTimeout) ->
 -spec tunnel(pid(), msg_id(), iolist(), timeout()) -> {ok, binary()} | {error, term()}.
 tunnel(Pid, MsgId, Pkt, Timeout) ->
     Req = {tunneled, MsgId, Pkt},
-    gen_server:call(Pid, {req, Req, Timeout}, infinity).
+    call_infinity(Pid, {req, Req, Timeout}).
 
 %% @doc increment the counter at `bucket', `key' by `amount'
 -spec counter_incr(pid(), bucket(), key(), integer()) -> ok.
@@ -1135,7 +1154,7 @@ counter_incr(Pid, Bucket, Key, Amount) ->
 counter_incr(Pid, Bucket, Key, Amount, Options) ->
     {_, B} = maybe_bucket_type(Bucket),
     Req = counter_incr_options(Options, #rpbcounterupdatereq{bucket=B, key=Key, amount=Amount}),
-    gen_server:call(Pid, {req, Req, default_timeout(put_timeout)}, infinity).
+    call_infinity(Pid, {req, Req, default_timeout(put_timeout)}).
 
 %% @doc get the current value of the counter at `Bucket', `Key'.
 -spec counter_val(pid(), bucket(), key()) ->
@@ -1150,7 +1169,7 @@ counter_val(Pid, Bucket, Key) ->
 counter_val(Pid, Bucket, Key, Options) ->
     {_, B} = maybe_bucket_type(Bucket),
     Req = counter_val_options(Options, #rpbcountergetreq{bucket=B, key=Key}),
-    gen_server:call(Pid, {req, Req, default_timeout(get_timeout)}, infinity).
+    call_infinity(Pid, {req, Req, default_timeout(get_timeout)}).
 
 
 %% @doc Fetches the representation of a convergent datatype from Riak.
@@ -1165,7 +1184,7 @@ fetch_type(Pid, BucketAndType, Key) ->
                         {ok, riakc_datatype:datatype()} | {error, term()}.
 fetch_type(Pid, BucketAndType, Key, Options) ->
     Req = riak_pb_dt_codec:encode_fetch_request(BucketAndType, Key, Options),
-    gen_server:call(Pid, {req, Req, default_timeout(get_timeout)}, infinity).
+    call_infinity(Pid, {req, Req, default_timeout(get_timeout)}).
 
 %% @doc Updates the convergent datatype in Riak with local
 %% modifications stored in the container type.
@@ -1186,7 +1205,7 @@ update_type(_Pid, _BucketAndType, _Key, undefined, _Options) ->
     {error, unmodified};
 update_type(Pid, BucketAndType, Key, {Type, Op, Context}, Options) ->
     Req = riak_pb_dt_codec:encode_update_request(BucketAndType, Key, {Type, Op, Context}, Options),
-    gen_server:call(Pid, {req, Req, default_timeout(put_timeout)}, infinity).
+    call_infinity(Pid, {req, Req, default_timeout(put_timeout)}).
 
 %% @doc Fetches, applies the given function to the value, and then
 %% updates the datatype in Riak. If an existing value is not found,
@@ -1203,12 +1222,28 @@ modify_type(Pid, Fun, BucketAndType, Key, Options) ->
             update_type(Pid, BucketAndType, Key, Mod:to_op(NewData), Options);
         {error, {notfound, Type}} when Create ->
             %% Not found, but ok to create it
-            Mod = riakc_datatype:module(Type),
+            Mod = riakc_datatype:module_for_type(Type),
             NewData = Fun(Mod:new()),
             update_type(Pid, BucketAndType, Key, Mod:to_op(NewData), Options);
         {error, Reason} ->
             {error, Reason}
     end.
+
+%% @doc Get active preflist.
+%% @equiv get_preflist(Pid, Bucket, Key, default_timeout(get_preflist_timeout))
+-spec get_preflist(pid(), bucket(), key()) -> {ok, preflist()}
+                                                 | {error, term()}.
+get_preflist(Pid, Bucket, Key) ->
+    get_preflist(Pid, Bucket, Key, default_timeout(get_preflist_timeout)).
+
+%% @doc Get active preflist specifying a server side timeout.
+%% @equiv get_preflist(Pid, Bucket, Key, default_timeout(get_preflist_timeout))
+-spec get_preflist(pid(), bucket(), key(), timeout()) -> {ok, preflist()}
+                                                            | {error, term()}.
+get_preflist(Pid, Bucket, Key, Timeout) ->
+    {T, B} = maybe_bucket_type(Bucket),
+    Req = #rpbgetbucketkeypreflistreq{type = T, bucket = B, key = Key},
+    call_infinity(Pid, {req, Req, Timeout}).
 
 
 %% ====================================================================
@@ -1222,17 +1257,14 @@ init([Address, Port, Options]) ->
     State = parse_options(Options, #state{address = Address,
                                           port = Port,
                                           queue = queue:new()}),
-    case State#state.auto_reconnect of
-        true ->
-            self() ! reconnect,
+    case connect(State) of
+        {error, Reason} when State#state.auto_reconnect /= true ->
+            {stop, {tcp, Reason}};
+        {error, _Reason} ->
+            erlang:send_after(State#state.reconnect_interval, self(), reconnect),
             {ok, State};
-        false ->
-            case connect(State) of
-                {error, Reason} ->
-                    {stop, {tcp, Reason}};
-                Ok ->
-                    Ok
-            end
+        Ok ->
+            Ok
     end.
 
 %% @private
@@ -1593,7 +1625,7 @@ process_response(#request{msg = #rpbgetreq{}}, rpbgetresp, State) ->
     %% server just returned the rpbgetresp code - no message was encoded
     {reply, {error, notfound}, State};
 process_response(#request{msg = #rpbgetreq{deletedvclock=true}},
-                 #rpbgetresp{vclock=VC, content=undefined}, State) ->
+                 #rpbgetresp{vclock=VC, content=[]}, State) ->
     %% server returned a notfound with a vector clock, meaning a tombstone
     {reply, {error, notfound, VC}, State};
 process_response(#request{msg = #rpbgetreq{}}, #rpbgetresp{unchanged=true}, State) ->
@@ -1762,7 +1794,7 @@ process_response(#request{msg = #dtfetchreq{}}, #dtfetchresp{}=Resp,
                  State) ->
     Reply = case riak_pb_dt_codec:decode_fetch_response(Resp) of
                 {Type, Value, Context}  ->
-                    Mod = riakc_datatype:module(Type),
+                    Mod = riakc_datatype:module_for_type(Type),
                     {ok, Mod:new(Value, Context)};
                 {notfound, _Type}=NF ->
                     {error, NF}
@@ -1782,10 +1814,10 @@ process_response(#request{msg = #dtupdatereq{op=Op, return_body=RB}},
                 ok -> ok;
                 {ok, Key} -> {ok, Key};
                 {OpType, Value, Context} ->
-                    Mod = riakc_datatype:module(OpType),
+                    Mod = riakc_datatype:module_for_type(OpType),
                     {ok, Mod:new(Value, Context)};
                 {Key, {OpType, Value, Context}} when is_binary(Key) ->
-                    Mod = riakc_datatype:module(OpType),
+                    Mod = riakc_datatype:module_for_type(OpType),
                     {ok, Key, Mod:new(Value, Context)}
             end,
     {reply, Reply, State};
@@ -1812,13 +1844,23 @@ process_response(#request{msg = #rpbyokozunaindexgetreq{}},
 
 process_response(#request{msg = #rpbyokozunaindexgetreq{}},
                  #rpbyokozunaindexgetresp{index=Indexes}, State) ->
-    Results = [[{index,Index#rpbyokozunaindex.name}, {schema,Index#rpbyokozunaindex.schema}]
+    Results = [[{index,Index#rpbyokozunaindex.name},
+                {schema,Index#rpbyokozunaindex.schema},
+                {n_val,Index#rpbyokozunaindex.n_val}]
         || Index <- Indexes ],
     {reply, {ok, Results}, State};
 
 process_response(#request{msg = #rpbyokozunaschemagetreq{}},
                  #rpbyokozunaschemagetresp{schema=Schema}, State) ->
     Result = [{name,Schema#rpbyokozunaschema.name}, {content,Schema#rpbyokozunaschema.content}],
+    {reply, {ok, Result}, State};
+
+process_response(#request{msg = #rpbgetbucketkeypreflistreq{}},
+                 #rpbgetbucketkeypreflistresp{preflist=Preflist}, State) ->
+    Result = [#preflist_item{partition=T#rpbbucketkeypreflistitem.partition,
+                             node=T#rpbbucketkeypreflistitem.node,
+                             primary=T#rpbbucketkeypreflistitem.primary}
+              || T <- Preflist],
     {reply, {ok, Result}, State};
 
 process_response(Request, Reply, State) ->
@@ -1890,7 +1932,7 @@ fmt_err_msg(ErrMsg) ->
 
 %% Common code for sending a single bucket or multiple inputs map/request
 %% @private
-send_mapred_req(Pid, MapRed, ClientPid, CallTimeout) ->
+send_mapred_req(Pid, MapRed, ClientPid) ->
     ReqMsg = #rpbmapredreq{request = encode_mapred_req(MapRed),
                            content_type = <<"application/x-erlang-binary">>},
     ReqId = mk_reqid(),
@@ -1904,7 +1946,7 @@ send_mapred_req(Pid, MapRed, ClientPid, CallTimeout) ->
            true ->
                Timeout
            end,
-    gen_server:call(Pid, {req, ReqMsg, Timeout1, {ReqId, ClientPid}}, CallTimeout).
+    call_infinity(Pid, {req, ReqMsg, Timeout1, {ReqId, ClientPid}}).
 
 %% @private
 %% Make a new request that can be sent or queued
@@ -1973,7 +2015,7 @@ connect(State) when State#state.sock =:= undefined ->
 start_tls(State=#state{sock=Sock}) ->
     %% Send STARTTLS
     StartTLSCode = riak_pb_codec:msg_code(rpbstarttls),
-    gen_tcp:send(Sock, <<StartTLSCode:8>>),
+    ok = gen_tcp:send(Sock, <<StartTLSCode:8>>),
     receive
         {tcp_error, Sock, Reason} ->
             {error, Reason};
@@ -2010,8 +2052,8 @@ start_tls(State=#state{sock=Sock}) ->
     end.
 
 start_auth(State=#state{credentials={User,Pass}, sock=Sock}) ->
-    ssl:send(Sock, riak_pb_codec:encode(#rpbauthreq{user=User,
-                                                    password=Pass})),
+    ok = ssl:send(Sock, riak_pb_codec:encode(#rpbauthreq{user=User,
+                                                         password=Pass})),
     receive
         {ssl_error, Sock, Reason} ->
             {error, Reason};
@@ -2270,6 +2312,35 @@ maybe_make_bucket_type(undefined, Bucket) ->
 maybe_make_bucket_type(Type, Bucket) ->
     {Type, Bucket}.
 
+%% @private
+%% @doc Create/Set record based on NVal value or throw an error.
+-spec set_index_create_req_nval(pos_integer()|undefined, binary(), binary()) ->
+                                 #rpbyokozunaindexputreq{}.
+set_index_create_req_nval(NVal, Index, SchemaName) when is_integer(NVal) ->
+    #rpbyokozunaindexputreq{index = #rpbyokozunaindex{
+                                       name = Index,
+                                       schema = SchemaName,
+                                       n_val = NVal}};
+set_index_create_req_nval(NVal, Index, SchemaName) when NVal =:= undefined ->
+    #rpbyokozunaindexputreq{index = #rpbyokozunaindex{
+                                       name = Index,
+                                       schema = SchemaName}};
+set_index_create_req_nval(NVal, _Index, _SchemaName)
+  when not is_integer(NVal); NVal =/= undefined ->
+    erlang:error(badarg).
+
+%% @private
+%% @doc Set record based on Timeout value or throw an error.
+-spec set_index_create_req_timeout(timeout(), #rpbyokozunaindexputreq{}) ->
+                                    #rpbyokozunaindexputreq{}.
+set_index_create_req_timeout(Timeout, Req) when is_integer(Timeout) ->
+    Req#rpbyokozunaindexputreq{timeout = Timeout};
+set_index_create_req_timeout(Timeout, Req) when Timeout =:= infinity ->
+    Req;
+set_index_create_req_timeout(Timeout, _Req) when not is_integer(Timeout) ->
+    erlang:error(badarg).
+
+
 %% ====================================================================
 %% unit tests
 %% ====================================================================
@@ -2365,6 +2436,15 @@ reset_riak() ->
         _ ->
             reset_riak_12()
     end.
+
+reset_solr(Pid) ->
+    %% clear indexes
+    {ok, Indexes} = ?MODULE:list_search_indexes(Pid),
+    [ ?MODULE:delete_search_index(Pid, proplists:get_value(index,Index)) || Index <- Indexes ],
+    wait_until( fun() ->
+        {ok, []} == ?MODULE:list_search_indexes(Pid)
+    end, 20, 1000),
+    ok.
 
 %% Resets a Riak 1.2+ node, which can run the memory backend in 'test'
 %% mode.
@@ -2473,12 +2553,13 @@ queue_disconnected_test() ->
     %% Start with an unlikely port number
     {ok, Pid} = start({127,0,0,1}, 65535, [queue_if_disconnected]),
     ?assertEqual({error, timeout}, ping(Pid, 10)),
+    ?assertEqual({error, timeout}, list_keys(Pid, <<"b">>, 10)),
     stop(Pid).
 
 auto_reconnect_bad_connect_test() ->
     %% Start with an unlikely port number
     {ok, Pid} = start({127,0,0,1}, 65535, [auto_reconnect]),
-    ?assertEqual({false, [{econnrefused,1}]}, is_connected(Pid)),
+    ?assertEqual({false, []}, is_connected(Pid)),
     ?assertEqual({error, disconnected}, ping(Pid)),
     ?assertEqual({error, disconnected}, list_keys(Pid, <<"b">>)),
     stop(Pid).
@@ -2798,7 +2879,7 @@ live_node_tests() ->
                  {ok, Pid} = start_link(test_ip(), test_port()),
                  {ok, Props} = get_bucket(Pid, <<"b">>),
                  ?assertEqual(3, proplists:get_value(n_val, Props)),
-                 ?assertEqual(true, proplists:get_value(allow_mult, Props))
+                 ?assertEqual(false, proplists:get_value(allow_mult, Props))
              end)},
 
      {"set bucket properties test",
@@ -3345,87 +3426,127 @@ live_node_tests() ->
                  ok = ?MODULE:counter_incr(Pid, Bucket, Key, -5, [{w, quorum}, {pw, one}, {dw, all}]),
                  ?assertEqual({ok, 5}, ?MODULE:counter_val(Pid, Bucket, Key, [{pr, one}]))
              end)},
-     {"create a search index / get / list / delete",
-     ?_test(begin
+     {"create a search index / get / list / delete with default timeout",
+     {timeout, 30, ?_test(begin
                 reset_riak(),
                 {ok, Pid} = start_link(test_ip(), test_port()),
-                ?assertEqual({ok, []}, ?MODULE:list_search_indexes(Pid)),
-                ?assertEqual(ok, ?MODULE:create_search_index(Pid, <<"indextest">>)),
-                F = fun() ->
-                    {ok, [{index,<<"indextest">>},{schema,<<"_yz_default">>}]} ==
-                        ?MODULE:get_search_index(Pid, <<"indextest">>)
-                end,
-                wait_until(F),
-                ?assertEqual({ok, [[{index,<<"indextest">>},{schema,<<"_yz_default">>}]]},
+                reset_solr(Pid),
+                Index = <<"indextest">>,
+                SchemaName = <<"_yz_default">>,
+                ?assertEqual(ok,
+                    ?MODULE:create_search_index(Pid,
+                                                Index,
+                                                SchemaName,
+                                                [{n_val,2}])),
+                    case ?MODULE:get_search_index(Pid, Index) of
+                        {ok, IndexData} ->
+                            ?assertEqual(proplists:get_value(
+                                         index, IndexData), Index),
+                            ?assertEqual(proplists:get_value(
+                                         schema, IndexData), SchemaName),
+                            ?assertEqual(proplists:get_value(
+                                         n_val, IndexData), 2);
+                        {error, <<"notfound">>} ->
+                            false
+                    end,
+                ?assertEqual({ok, [[{index,Index},
+                                    {schema,SchemaName},
+                                    {n_val,2}]]},
                              ?MODULE:list_search_indexes(Pid)),
-                ?assertEqual(ok, ?MODULE:delete_search_index(Pid, <<"indextest">>))
-         end)},
-     {"create a search schema / get",
-     ?_test(begin
+                ?assertEqual(ok, ?MODULE:delete_search_index(Pid, Index))
+             end)}},
+     {"create a search index / get with user-set timeout",
+     {timeout, 30, ?_test(begin
                 reset_riak(),
                 {ok, Pid} = start_link(test_ip(), test_port()),
+                reset_solr(Pid),
+                Index = <<"indexwithintimeouttest">>,
+                SchemaName = <<"_yz_default">>,
+                ?assertEqual(ok,
+                    ?MODULE:create_search_index(Pid,
+                                                Index,
+                                                SchemaName,
+                                                20000)),
+                    case ?MODULE:get_search_index(Pid, Index) of
+                        {ok, IndexData} ->
+                            ?assertEqual(proplists:get_value(
+                                         index, IndexData), Index),
+                            ?assertEqual(proplists:get_value(
+                                         schema, IndexData), SchemaName);
+                        {error, <<"notfound">>} ->
+                            false
+                    end
+             end)}},
+     {"create a search schema / get",
+      {timeout, 30, ?_test(begin
+                reset_riak(),
+                {ok, Pid} = start_link(test_ip(), test_port()),
+                reset_solr(Pid),
                 Schema = <<"<?xml version=\"1.0\" encoding=\"UTF-8\" ?>
 <schema name=\"test\" version=\"1.5\">
 <fields>
-   <field name=\"_yz_id\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" required=\"true\" />
-   <field name=\"_yz_ed\" type=\"_yz_str\" indexed=\"true\" stored=\"false\"/>
-   <field name=\"_yz_pn\" type=\"_yz_str\" indexed=\"true\" stored=\"false\"/>
-   <field name=\"_yz_fpn\" type=\"_yz_str\" indexed=\"true\" stored=\"false\"/>
-   <field name=\"_yz_vtag\" type=\"_yz_str\" indexed=\"true\" stored=\"true\"/>
-   <field name=\"_yz_node\" type=\"_yz_str\" indexed=\"true\" stored=\"true\"/>
-   <field name=\"_yz_rt\" type=\"_yz_str\" indexed=\"true\" stored=\"true\"/>
-   <field name=\"_yz_rk\" type=\"_yz_str\" indexed=\"true\" stored=\"true\"/>
-   <field name=\"_yz_rb\" type=\"_yz_str\" indexed=\"true\" stored=\"true\"/>
-   <field name=\"_yz_err\" type=\"_yz_str\" indexed=\"true\" stored=\"false\"/>
+   <field name=\"_yz_id\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" required=\"true\" multiValued=\"false\"/>
+   <field name=\"_yz_ed\" type=\"_yz_str\" indexed=\"true\" stored=\"false\" multiValued=\"false\"/>
+   <field name=\"_yz_pn\" type=\"_yz_str\" indexed=\"true\" stored=\"false\" multiValued=\"false\"/>
+   <field name=\"_yz_fpn\" type=\"_yz_str\" indexed=\"true\" stored=\"false\" multiValued=\"false\"/>
+   <field name=\"_yz_vtag\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" multiValued=\"false\"/>
+   <field name=\"_yz_rt\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" multiValued=\"false\"/>
+   <field name=\"_yz_rk\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" multiValued=\"false\"/>
+   <field name=\"_yz_rb\" type=\"_yz_str\" indexed=\"true\" stored=\"true\" multiValued=\"false\"/>
+   <field name=\"_yz_err\" type=\"_yz_str\" indexed=\"true\" stored=\"false\" multiValued=\"false\"/>
 </fields>
 <uniqueKey>_yz_id</uniqueKey>
 <types>
     <fieldType name=\"_yz_str\" class=\"solr.StrField\" sortMissingLast=\"true\" />
 </types>
 </schema>">>,
-                SchemaName = <<"myschema">>,
                 Index = <<"schemaindex">>,
+                SchemaName = <<"myschema">>,
                 ?assertEqual(ok, ?MODULE:create_search_schema(Pid, SchemaName, Schema)),
                 ?assertEqual(ok, ?MODULE:create_search_index(Pid, Index, SchemaName, [])),
                 wait_until( fun() ->
-                    {ok, [[{index, Index},{schema, SchemaName}]]} ==
-                        ?MODULE:list_search_indexes(Pid)
-                end ),
+                    case ?MODULE:list_search_indexes(Pid) of
+                        {ok, []} ->
+                            false;
+                        {ok, [IndexData|_]} ->
+                            proplists:get_value(index, IndexData) == Index andalso
+                            proplists:get_value(schema, IndexData) == SchemaName andalso
+                            proplists:get_value(n_val, IndexData) == 3
+                    end
+                end, 20, 1000 ),
                 wait_until( fun() ->
-                    {ok, [{name, SchemaName},{content, Schema}]} ==
-                        ?MODULE:get_search_schema(Pid, SchemaName)
-                end )
-         end)},
+                    case ?MODULE:get_search_schema(Pid, SchemaName) of
+                        {ok, SchemaData} ->
+                            proplists:get_value(name, SchemaData) == SchemaName andalso
+                            proplists:get_value(content, SchemaData) == Schema;
+                        {error, <<"notefound">>} ->
+                            false
+                    end
+                end, 20, 1000 )
+         end)}},
      {"create a search index and tie to a bucket",
-     ?_test(begin
+     {timeout, 30, ?_test(begin
                 reset_riak(),
                 {ok, Pid} = start_link(test_ip(), test_port()),
                 Index = <<"myindex">>,
                 Bucket = <<"mybucket">>,
                 ?assertEqual(ok, ?MODULE:create_search_index(Pid, Index)),
-                wait_until( fun() ->
-                    {ok, [{index, Index},{schema, <<"_yz_default">>}]} ==
-                        ?MODULE:get_search_index(Pid, Index)
-                end ),
                 ok = ?MODULE:set_search_index(Pid, Bucket, Index),
                 PO = riakc_obj:new(Bucket, <<"fred">>, <<"{\"name_s\":\"Freddy\"}">>, "application/json"),
                 {ok, _Obj} = ?MODULE:put(Pid, PO, [return_head]),
                 wait_until( fun() ->
                     {ok, Result} = search(Pid, Index, <<"*:*">>),
                     1 == Result#search_results.num_found
-                end )
-         end)},
+                end, 20, 1000 )
+         end)}},
      {"search utf8",
-     ?_test(begin
+     {timeout, 30, ?_test(begin
                 reset_riak(),
                 {ok, Pid} = start_link(test_ip(), test_port()),
+                reset_solr(Pid),
                 Index = <<"myindex">>,
                 Bucket = <<"mybucket">>,
                 ?assertEqual(ok, ?MODULE:create_search_index(Pid, Index)),
-                wait_until( fun() ->
-                    {ok, [{index, Index},{schema, <<"_yz_default">>}]} ==
-                        ?MODULE:get_search_index(Pid, Index)
-                end ),
                 ok = ?MODULE:set_search_index(Pid, Bucket, Index),
                 PO = riakc_obj:new(Bucket, <<"fred">>, <<"{\"name_s\":\"בָּרָא\"}">>, "application/json"),
                 {ok, _Obj} = ?MODULE:put(Pid, PO, [return_head]),
@@ -3433,7 +3554,354 @@ live_node_tests() ->
                     {ok, Result} = search(Pid, Index, <<"name_s:בָּרָא">>),
                     1 == Result#search_results.num_found
                 end )
-         end)}
+         end)}},
+     {"trivial set delete",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>, riakc_set:new()))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 1),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:del_element(<<"X">>, S0))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assertNot(riakc_set:is_element(<<"X">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 0)
+             end)},
+     {"add and remove items in nested set in map",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(riakc_map:update({<<"set">>, set},
+                                                                      fun(S) ->
+                                                                              riakc_set:add_element(<<"X">>,
+                                                                                                    riakc_set:add_element(<<"Y">>, S))
+                                                                      end, riakc_map:new()))),
+                    {ok, M0} = riakc_pb_socket:fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L0 = riakc_map:fetch({<<"set">>, set}, M0),
+                    ?assert(lists:member(<<"X">>, L0)),
+                    ?assert(lists:member(<<"Y">>, L0)),
+                    ?assertEqual(length(L0), 2),
+
+                    M1 = riakc_map:update({<<"set">>, set},
+                                          fun(S) -> riakc_set:del_element(<<"X">>,
+                                                                          riakc_set:add_element(<<"Z">>, S)) end,
+                                          M0),
+
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M1)),
+                    {ok, M2} = riakc_pb_socket:fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L1 = riakc_map:fetch({<<"set">>, set}, M2),
+
+                    ?assert(lists:member(<<"Y">>, L1)),
+                    ?assert(lists:member(<<"Z">>, L1)),
+                    ?assertEqual(length(L1), 2)
+             end)},
+     {"increment nested counter",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(riakc_map:update({<<"counter">>, counter},
+                                                                      fun(C) ->
+                                                                              riakc_counter:increment(5, C)
+                                                                      end, riakc_map:new()))),
+                    {ok, M0} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    C0 = riakc_map:fetch({<<"counter">>, counter}, M0),
+                    ?assertEqual(C0, 5),
+
+                    M1 = riakc_map:update({<<"counter">>, counter},
+                                          fun(C) -> riakc_counter:increment(200, C) end,
+                                          M0),
+                    M2 = riakc_map:update({<<"counter">>, counter},
+                                          fun(C) -> riakc_counter:decrement(117, C) end,
+                                          M1),
+                    M3 = riakc_map:update({<<"counter">>, counter},
+                                          fun(C) -> riakc_counter:increment(256, C) end,
+                                          M2),
+
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M3)),
+                    {ok, M4} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    C1 = riakc_map:fetch({<<"counter">>, counter}, M4),
+                    ?assertEqual(C1, 344)
+             end)},
+     {"updated nested lww register",
+         ?_test(begin
+                    reset_riak(),
+                    %% The word "stone" translated into Russian and Thai
+                    StoneInRussian = [1051,1102,1082,32,1082,1072,1084,1085,1077,1091,1083,1086,
+                                      1074,1080,1090,1077,1083,1103],
+                    StoneInThai = [3627,3636,3609],
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                                     {<<"map_bucket">>, <<"bucket">>},
+                                                     <<"key">>,
+                                     riakc_map:to_op(
+                                       riakc_map:update(
+                                       {<<"register">>, register},
+                                       fun(R) ->
+                                               riakc_register:set(
+                                                 term_to_binary({"barney", "rubble", StoneInRussian}),
+                                                 R)
+                                       end, riakc_map:new()))),
+                    {ok, M0} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    R0 = riakc_map:fetch({<<"register">>, register}, M0),
+                    ?assertEqual(binary_to_term(R0), {"barney", "rubble", StoneInRussian}),
+
+                    ok = riakc_pb_socket:update_type(Pid,
+                                                     {<<"map_bucket">>, <<"bucket">>},
+                                                     <<"key">>,
+                                     riakc_map:to_op(
+                                       riakc_map:update(
+                                       {<<"register">>, register},
+                                       fun(R) ->
+                                               riakc_register:set(
+                                                 term_to_binary({"barney", "rubble", StoneInThai}),
+                                                 R)
+                                       end, M0))),
+
+                    {ok, M1} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    R1 = riakc_map:fetch({<<"register">>, register}, M1),
+                    ?assertEqual(binary_to_term(R1), {"barney", "rubble", StoneInThai})
+             end)},
+     {"throw exception for undefined context for delete",
+         ?_test(begin
+                    reset_riak(),
+                    ?assertThrow(context_required, riakc_set:del_element(<<"X">>,
+                                                                         riakc_set:add_element(<<"X">>,
+                                                                                               riakc_set:new()))),
+                    ?assertThrow(context_required, riakc_map:erase({<<"counter">>, counter}, riakc_map:new())),
+                    ?assertThrow(context_required, riakc_map:erase({<<"set">>, set}, riakc_map:new())),
+                    ?assertThrow(context_required, riakc_map:erase({<<"map">>, map}, riakc_map:new())),
+                    ?assertThrow(context_required, riakc_map:update({<<"set">>, set}, fun(S) -> riakc_set:del_element(<<"Y">>, S) end, riakc_map:new())),
+                    ?assertThrow(context_required, riakc_flag:disable(riakc_flag:new()))
+             end)},
+     {"delete bogus item from set",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>, riakc_set:new()))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 1),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:del_element(<<"Y">>, S0))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 1)
+             end)},
+     {"add redundant item to set",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>, riakc_set:new()))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 1),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>, S0))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 1)
+             end)},
+     {"add and remove redundant item to/from set",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>,
+                                                                           riakc_set:add_element(<<"Y">>, riakc_set:new())))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 2),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:del_element(<<"X">>, riakc_set:add_element(<<"X">>, S0)))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S1)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 2)
+             end)},
+     {"remove then add redundant item from/to set",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>,
+                                                                           riakc_set:add_element(<<"Y">>, riakc_set:new())))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 2),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>, riakc_set:del_element(<<"X">>, S0)))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S1)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 2)
+             end)},
+     {"remove item from set with outdated context",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"X">>,
+                                                                           riakc_set:add_element(<<"Y">>, riakc_set:new())))),
+                    {ok, S0} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S0)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S0)),
+                    ?assertEqual(riakc_set:size(S0), 2),
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:add_element(<<"Z">>, riakc_set:new()))),
+
+                    ok = update_type(Pid,
+                                     {<<"set_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_set:to_op(riakc_set:del_element(<<"Z">>, S0))),
+                    {ok, S1} = fetch_type(Pid, {<<"set_bucket">>, <<"bucket">>}, <<"key">>),
+                    ?assert(riakc_set:is_element(<<"X">>, S1)),
+                    ?assert(riakc_set:is_element(<<"Y">>, S1)),
+                    ?assert(riakc_set:is_element(<<"Z">>, S1)),
+                    ?assertEqual(riakc_set:size(S1), 3)
+             end)},
+     {"add item to nested set in map while also removing set",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(riakc_map:update({<<"set">>, set},
+                                                                      fun(S) ->
+                                                                              riakc_set:add_element(<<"X">>,
+                                                                                                    riakc_set:add_element(<<"Y">>, S))
+                                                                      end, riakc_map:new()))),
+                    {ok, M0} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L0 = riakc_map:fetch({<<"set">>, set}, M0),
+                    ?assert(lists:member(<<"X">>, L0)),
+                    ?assert(lists:member(<<"Y">>, L0)),
+                    ?assertEqual(length(L0), 2),
+
+                    M1 = riakc_map:update({<<"set">>, set},
+                                          fun(S) -> riakc_set:add_element(<<"Z">>, S) end,
+                                          M0),
+                    M2 = riakc_map:erase({<<"set">>, set}, M1),
+
+                    ok = update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M2)),
+                    {ok, M3} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L1 = riakc_map:fetch({<<"set">>, set}, M3),
+
+                    ?assert(lists:member(<<"Z">>, L1)),
+                    ?assertEqual(length(L1), 1)
+             end)},
+     {"increment nested counter in map while also removing counter",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(riakc_map:update({<<"counter">>, counter},
+                                                                      fun(C) ->
+                                                                              riakc_counter:increment(5, C)
+                                                                      end, riakc_map:new()))),
+                    {ok, M0} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    C0 = riakc_map:fetch({<<"counter">>, counter}, M0),
+                    ?assertEqual(C0, 5),
+
+                    M1 = riakc_map:update({<<"counter">>, counter},
+                                          fun(C) -> riakc_counter:increment(2, C) end,
+                                          M0),
+                    M2 = riakc_map:erase({<<"counter">>, counter}, M1),
+
+                    ok = update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M2)),
+                    {ok, M3} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    C1 = riakc_map:fetch({<<"counter">>, counter}, M3),
+
+                    %% Expected result depends on combination of vnodes involved, so accept either answer
+                    ?assert(C1 =:= 2 orelse C1 =:= 7)
+             end)},
+     {"add item to nested set in nested map in map while also removing nested map",
+         ?_test(begin
+                    reset_riak(),
+                    {ok, Pid} = start_link(test_ip(), test_port()),
+                    M0 = riakc_map:update({<<"map">>, map},
+                                          fun(M) ->
+                                                  riakc_map:update({<<"set">>, set},
+                                                                   fun(S) ->
+                                                                           riakc_set:add_element(<<"X">>,
+                                                                                                 riakc_set:add_element(<<"Y">>, S))
+                                                                   end,
+                                                                   M)
+                                          end,
+                                          riakc_map:new()),
+                    ok = riakc_pb_socket:update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M0)),
+
+                    {ok, M1} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L0 = orddict:fetch({<<"set">>, set}, riakc_map:fetch({<<"map">>, map}, M1)),
+
+                    ?assert(lists:member(<<"X">>, L0)),
+                    ?assert(lists:member(<<"Y">>, L0)),
+                    ?assertEqual(length(L0), 2),
+
+                    M2 = riakc_map:update({<<"map">>, map},
+                                          fun(M) -> riakc_map:update({<<"set">>, set},
+                                                                     fun(S) -> riakc_set:add_element(<<"Z">>, S) end,
+                                                                     M)
+                                          end,
+                                          M1),
+                    M3 = riakc_map:erase({<<"map">>, map}, M2),
+
+                    ok = update_type(Pid,
+                                     {<<"map_bucket">>, <<"bucket">>}, <<"key">>,
+                                     riakc_map:to_op(M3)),
+                    {ok, M4} = fetch_type(Pid, {<<"map_bucket">>, <<"bucket">>}, <<"key">>),
+                    L1 = orddict:fetch({<<"set">>, set}, riakc_map:fetch({<<"map">>, map}, M4)),
+
+                    ?assert(lists:member(<<"Z">>, L1)),
+                    ?assertEqual(length(L1), 1)
+                end)},
+     {"get preflist test",
+      ?_test(begin
+                 reset_riak(),
+                 {ok, Pid} = start_link(test_ip(), test_port()),
+                 {ok, Preflist} = get_preflist(Pid, <<"b">>, <<"f">>),
+                 ?assertEqual([#preflist_item{partition = 52,
+                                              node = <<"riak@127.0.0.1">>,
+                                              primary = true},
+                               #preflist_item{partition = 53,
+                                              node = <<"riak@127.0.0.1">>,
+                                              primary = true},
+                               #preflist_item{partition = 54,
+                                              node = <<"riak@127.0.0.1">>,
+                                              primary = true}],
+                              Preflist)
+             end)}
      ].
 
 -endif.

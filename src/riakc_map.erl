@@ -30,12 +30,10 @@
 %% serialized into `register' fields if last-write-wins semantics are
 %% sufficient.</li>
 %% <li>Like the other eventually-consistent types, updates are not
-%% applied to local state. Instead, additions, removals, and
-%% modifications are captured for later application by Riak. Use
-%% `dirty_value/1' to access a local "view" of the updates.</li>
-%% <li>You may not "store" values in a map, but you may create new
-%% entries using `add/2', which inserts an empty value of the
-%% specified type. Existing or non-existing entries can be modified
+%% applied to local state. Instead, removals, and
+%% modifications are captured for later application by Riak.</li>
+%% <li>You may not "store" values in a map.
+%%  Existing or non-existing entries can be modified
 %% using `update/3', which is analogous to `dict:update/3'. If the
 %% entry is not present, it will be populated with a new value before
 %% the update function is applied. The update function will receive
@@ -43,9 +41,9 @@
 %% <li>Like sets, removals will be processed before additions and
 %% updates in Riak. Removals performed without a context may result in
 %% failure.</li>
-%% <li>Adding or updating an entry followed by removing that same
+%% <li> Updating an entry followed by removing that same
 %% entry will result in no operation being recorded. Likewise,
-%% removing an entry followed by adding or updating that entry will
+%% removing an entry followed by updating that entry will
 %% cancel the removal operation.</li>
 %% </ul>
 %% @end
@@ -54,20 +52,19 @@
 
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
+-include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 -endif.
 
 %% Callbacks
--export([new/0, new/2,
+-export([new/0, new/1, new/2,
          value/1,
-         dirty_value/1,
          to_op/1,
          is_type/1,
          type/0]).
 
 %% Operations
--export([add/2,
-         erase/2,
+-export([erase/2,
          update/3]).
 
 %% Queries
@@ -80,7 +77,6 @@
 
 -record(map, {value = [] :: [raw_entry()], %% orddict
               updates = [] :: [entry()], %% orddict
-              adds = [] :: ordsets:ordset(key()),
               removes = [] :: ordsets:ordset(key()),
               context = undefined :: riakc_datatype:context() }).
 
@@ -95,43 +91,37 @@
                             riakc_register:register_op() |
                             map_op().
 -type field_update() :: {update, key(), embedded_type_op()}.
--type simple_map_op() :: {add, key()} | {remove, key()} | field_update().
+-type simple_map_op() :: {remove, key()} | field_update().
 -type map_op() :: {update, [simple_map_op()]}.
 
--export_type([map/0]).
--type map() :: #map{}.
+-export_type([crdt_map/0]).
+-type crdt_map() :: #map{}.
 
 %% @doc Creates a new, empty map container type.
--spec new() -> map().
+-spec new() -> crdt_map().
 new() ->
     #map{}.
 
+%% @doc Creates a new map with the specified context.
+-spec new(riakc_datatype:context()) -> crdt_map().
+new(Context) ->
+    #map{context=Context}.
+
 %% @doc Creates a new map with the specified key-value pairs and context.
--spec new([raw_entry()], riakc_datatype:context()) -> map().
+-spec new([raw_entry()], riakc_datatype:context()) -> crdt_map().
 new(Values, Context) when is_list(Values) ->
     #map{value=orddict:from_list(Values), context=Context}.
 
 %% @doc Gets the original value of the map.
--spec value(map()) -> [raw_entry()].
+-spec value(crdt_map()) -> [raw_entry()].
 value(#map{value=V}) -> V.
-
-%% @doc Gets the value of the map after local updates are applied.
--spec dirty_value(map()) -> [raw_entry()].
-dirty_value(#map{value=V, updates=U, removes=R}) ->
-    Merged = orddict:merge(fun(K, _Value, Update) ->
-                                   Mod = type_module(K),
-                                   Mod:dirty_value(Update)
-                           end, V, U),
-    [ Pair || {Key, _}=Pair <- Merged,
-              not ordsets:is_element(Key, R) ].
 
 %% @doc Extracts an operation from the map that can be encoded into an
 %% update request.
--spec to_op(map()) -> riakc_datatype:update(map_op()).
-to_op(#map{updates=U, adds=A, removes=R, context=C}) ->
-    Updates = [ {add, Key} || Key <- A ] ++
-        [ {remove, Key} || Key <- R ] ++
-         orddict:fold(fun fold_extract_op/3, [], U),
+-spec to_op(crdt_map()) -> riakc_datatype:update(map_op()).
+to_op(#map{updates=U, removes=R, context=C}) ->
+    Updates = [ {remove, Key} || Key <- R ] ++
+        orddict:fold(fun fold_extract_op/3, [], U),
     case Updates of
         [] -> undefined;
         _ ->
@@ -150,125 +140,110 @@ type() -> map.
 
 %% ==== Operations ====
 
-%% @doc Adds a key to the map, inserting the empty value for its type.
-%% Adding a key that already exists in the map has no effect. If the
-%% key has been previously removed from the map, the removal will be
-%% discarded, but no explicit add will be recorded.
--spec add(key(), map()) -> map().
-add(Key, #map{value=V, updates=U, adds=A, removes=R}=M) ->
-    case {orddict:is_key(Key, U), ordsets:is_element(Key, R)} of
-        %% It is already in the updates, do nothing.
-        {true, _} ->
-            M;
-        %% It was previously removed, clear that removal.
-        {false, true} ->
-            M#map{removes=ordsets:del_element(Key, R)};
-        %% It is brand new, record the add and store a value in the
-        %% updates. If it was in the original value, initialize it
-        %% with that.
-        {false, false} ->
-            Value = find_or_new(Key, V),
-            M#map{adds=ordsets:add_element(Key, A),
-                  updates=orddict:store(Key, Value, U)}
-    end.
-
 %% @doc Removes a key and its value from the map. Removing a key that
-%% does not exist simply records a remove operation. Removing a key
-%% whose value has been added via `add/2' or locally modified via
-%% `update/3' nullifies any of those modifications, without recording
-%% a remove operation.
--spec erase(key(), map()) -> map().
-erase(Key, #map{updates=U, adds=A, removes=R}=M) ->
-    case orddict:is_key(Key, U) of
-        true ->
-            M#map{updates=orddict:erase(Key, U),
-                  adds=ordsets:del_element(Key, A)};
-        false ->
-            M#map{removes=ordsets:add_element(Key, R)}
-    end.
+%% does not exist simply records a remove operation.
+%% @throws context_required
+-spec erase(key(), crdt_map()) -> crdt_map().
+erase(_Key, #map{context=undefined}) ->
+    throw(context_required);
+erase(Key, #map{removes=R}=M) ->
+    M#map{removes=ordsets:add_element(Key, R)}.
+
 
 %% @doc Updates the value stored at the key by calling the passed
 %% function to get the new value. If the key did not previously exist,
 %% it will be initialized to the empty value for its type before being
-%% passed to the function. If the key was previously removed with
-%% `erase/2', the remove operation will be nullified.
--spec update(key(), update_fun(), map()) -> map().
-update(Key, Fun, #map{value=V, updates=U0, removes=R0}=M) ->
-    R = ordsets:del_element(Key, R0),
-    U = case orddict:is_key(Key, U0) of
-            true ->
-                orddict:update(Key, Fun, U0);
-            false ->
-                orddict:store(Key, Fun(find_or_new(Key, V)), U0)
-        end,
-    M#map{removes=R, updates=U}.
+%% passed to the function.
+-spec update(key(), update_fun(), crdt_map()) -> crdt_map().
+update(Key, Fun, #map{updates=U}=M) ->
+    %% In order, search for key in 1) batched updates, then 2) values
+    %% taken from Riak, and otherwise 3) create a new, empty data type
+    %% for the update
+    O = update_value_or_new(orddict:find(Key, U), Key, M),
+    M#map{updates=orddict:store(Key, Fun(O), U)}.
 
 %% ==== Queries ====
 
 %% @doc Returns the number of entries in the map.
--spec size(map()) -> pos_integer().
+-spec size(crdt_map()) -> pos_integer().
 size(#map{value=Entries}) ->
     orddict:size(Entries).
 
 %% @doc Returns the "unwrapped" value associated with the key in the
 %% map. If the key is not present, an exception is generated.
--spec fetch(key(), map()) -> term().
+-spec fetch(key(), crdt_map()) -> term().
 fetch(Key, #map{value=Entries}) ->
     orddict:fetch(Key, Entries).
 
 %% @doc Searches for a key in the map. Returns `{ok, UnwrappedValue}'
 %% when the key is present, or `error' if the key is not present in
 %% the map.
--spec find(key(), map()) -> {ok, term()} | error.
+-spec find(key(), crdt_map()) -> {ok, term()} | error.
 find(Key, #map{value=Entries}) ->
     orddict:find(Key, Entries).
 
 %% @doc Test if the key is contained in the map.
--spec is_key(key(), map()) -> boolean().
+-spec is_key(key(), crdt_map()) -> boolean().
 is_key(Key, #map{value=Entries}) ->
     orddict:is_key(Key, Entries).
 
 %% @doc Returns a list of all keys in the map.
--spec fetch_keys(map()) -> [key()].
+-spec fetch_keys(crdt_map()) -> [key()].
 fetch_keys(#map{value=Entries}) ->
     orddict:fetch_keys(Entries).
 
 %% @doc Folds over the entries in the map. This yields raw values,
 %% not container types.
--spec fold(fun((key(), term(), term()) -> term()), term(), map()) -> term().
+-spec fold(fun((key(), term(), term()) -> term()), term(), crdt_map()) -> term().
 fold(Fun, Acc0, #map{value=Entries}) ->
     orddict:fold(Fun, Acc0, Entries).
 
 %% ==== Internal functions ====
-
-find_or_new(Key, Values) ->
-    Mod = type_module(Key),
-    case orddict:find(Key, Values) of
-        {ok, Found} ->
-            Mod:new(Found, undefined);
-        error ->
-            Mod:new()
-    end.
 
 %% @doc Determines the module for the container type of the value
 %% pointed to by the given key.
 %% @private
 -spec type_module(key()) -> module().
 type_module({_, T}) ->
-    riakc_datatype:module(T).
+    riakc_datatype:module_for_type(T).
 
 %% @doc Folder for extracting operations from embedded types.
 -spec fold_extract_op(key(), riakc_datatype:datatype(), [field_update()]) -> [field_update()].
 fold_extract_op(Key, Value, Acc0) ->
     Mod = type_module(Key),
-    case Mod:to_op(Value) of
-        undefined ->
-            Acc0;
-        {_Type, Op, _Context} ->
-            [{update, Key, Op} | Acc0]
-    end.
+    fold_ignore_noop(Mod:to_op(Value), Key, Acc0).
+
+%% @doc Assist `fold_extract_op/3'
+fold_ignore_noop(undefined, _Key, Acc0) ->
+    Acc0;
+fold_ignore_noop({_Type, Op, _Context}, Key, Acc0) ->
+    [{update, Key, Op} | Acc0].
+
+%% @doc Helper function for `update/3`. Look for a key in this map's
+%% updates, and if not found, invoke `value_or_new/3'.
+-spec update_value_or_new({'ok', riakc_datatype:datatype()} | error,
+                          key(), crdt_map()) ->
+                                 riakc_datatype:datatype().
+update_value_or_new({ok, O}, _Key, _Map) ->
+    O;
+update_value_or_new(error, Key, #map{value=V, context=C}) ->
+    Mod = type_module(Key),
+    value_or_new(orddict:find(Key, V), Mod, C).
+
+%% @doc Helper function for `update/3`. Look for a key in the map's
+%% value, and if not found, instantiate a new data type record.
+-spec value_or_new({'ok', term()} | error,
+                   module(), riakc_datatype:context()) ->
+                          riakc_datatype:datatype().
+value_or_new({ok, Val}, Mod, Context) ->
+    Mod:new(Val, Context);
+value_or_new(error, Mod, Context) ->
+    Mod:new(Context).
 
 -ifdef(EQC).
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
 gen_type() ->
     ?SIZED(S, gen_type(S)).
 
@@ -299,7 +274,6 @@ gen_key() ->
 
 gen_op() ->
     oneof([
-           {add, [gen_key()]},
            {erase, [gen_key()]},
            ?LAZY({update, ?LET({_,T}=Key, gen_key(), [Key,
                                                       gen_update_fun(T)])})
@@ -310,18 +284,32 @@ gen_update_fun(Type) ->
                {1, gen_update_fun2(Type)}]).
 
 gen_update_fun1(Type) ->
-    Mod = riakc_datatype:module(Type),
+    Mod = riakc_datatype:module_for_type(Type),
     ?LET({Op, Args}, Mod:gen_op(),
          fun(R) ->
                  erlang:apply(Mod, Op, Args ++ [R])
          end).
 
 gen_update_fun2(Type) ->
-    Mod = riakc_datatype:module(Type),
+    Mod = riakc_datatype:module_for_type(Type),
     ?LET(OpList, non_empty(list(Mod:gen_op())),
          fun(R) ->
                  lists:foldl(fun({Op, Args}, Acc) ->
                                      erlang:apply(Mod, Op, Args ++ [Acc])
                              end, R, OpList)
          end).
+
+prop_nested_defaults() ->
+    %% A map with default-initialized nested objects should
+    %% effectively be a no-op
+    ?FORALL(Nops, non_empty(list(gen_key())),
+            begin
+                Map = lists:foldl(fun(K,M) -> riakc_map:update(K, fun(V) -> V end, M) end,
+                                  riakc_map:new(), Nops),
+                undefined == riakc_map:to_op(Map)
+            end).
+
+prop_nested_defaults_test() ->
+    ?assert(eqc:quickcheck(?QC_OUT(prop_nested_defaults()))).
+
 -endif.

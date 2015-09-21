@@ -36,7 +36,7 @@
 
 -define(MODULES, [riakc_set, riakc_counter, riakc_flag, riakc_register, riakc_map]).
 
--export([module/1,
+-export([module_for_type/1,
          module_for_term/1]).
 
 -export_type([datatype/0, update/1, context/0]).
@@ -51,6 +51,10 @@
 %% creating a new key.
 -callback new() -> datatype().
 
+%% Constructs a new, empty container with context for the type. Use
+%% this when creating a new key inside a map.
+-callback new(context()) -> datatype().
+
 %% Constructs a new container for the type with the specified
 %% value and opaque server-side context. This should only be used
 %% internally by the client code.
@@ -59,10 +63,6 @@
 %% Returns the original, unmodified value of the type. This does
 %% not include the application of any locally-queued operations.
 -callback value(datatype()) -> term().
-
-%% Returns a version of the value with locally-queued operations
-%% applied.
--callback dirty_value(datatype()) -> term().
 
 %% Extracts an operation from the container that can be encoded
 %% into an update request. 'undefined' should be returned if the type
@@ -80,12 +80,12 @@
 
 %% Returns the module that is a container for the given abstract
 %% type.
--spec module(Type::atom()) -> module().
-module(set)      -> riakc_set;
-module(counter)  -> riakc_counter;
-module(flag)     -> riakc_flag;
-module(register) -> riakc_register;
-module(map)      -> riakc_map.
+-spec module_for_type(Type::atom()) -> module().
+module_for_type(set)      -> riakc_set;
+module_for_type(counter)  -> riakc_counter;
+module_for_type(flag)     -> riakc_flag;
+module_for_type(register) -> riakc_register;
+module_for_type(map)      -> riakc_map.
 
 %% @doc Returns the appropriate container module for the given term,
 %% if possible.
@@ -175,5 +175,5 @@ prop_module_for_term(Mod) ->
 prop_module_type() ->
     %% module/1 returns the correct wrapper module for the type.
     ?FORALL(Mod, elements(?MODULES),
-            module(Mod:type()) == Mod).
+            module_for_type(Mod:type()) == Mod).
 -endif.
